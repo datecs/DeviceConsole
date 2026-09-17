@@ -97,6 +97,30 @@ dm.enablePowerButton()    // restore
 
 ---
 
+## USB File Transfer
+
+Block file access from a connected PC. Persists across reboots.
+
+| Method | Description |
+|--------|-------------|
+| `enableUsbFileTransfer(boolean)` | Allow or block MTP/PTP file transfer over USB |
+| `getUsbFileTransferEnabled()` | Returns current state |
+
+```kotlin
+// PC sees the device but no storage; apps keep full access to internal storage and SD card
+dm.enableUsbFileTransfer(false)
+
+// Read state
+val allowed = dm.usbFileTransferEnabled
+```
+
+When disabled:
+- An active File transfer / PTP session is closed
+- "File transfer" and "PTP" are hidden in Settings → USB preferences
+- ADB and charging are not affected
+
+---
+
 ## Power Management
 
 | Method | Description |

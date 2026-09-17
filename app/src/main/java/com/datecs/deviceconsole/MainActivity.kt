@@ -51,6 +51,7 @@ private fun MainScreen(modifier: Modifier = Modifier) {
     var statusBarEnabled by remember { mutableStateOf(dm.statusBarEnabled) }
     var expansionEnabled by remember { mutableStateOf(dm.statusBarExpansionEnabled) }
     var navBarEnabled by remember { mutableStateOf(dm.navigationBarEnabled) }
+    var usbFileTransferEnabled by remember { mutableStateOf(dm.usbFileTransferEnabled) }
 
     Column(
         modifier = modifier
@@ -71,6 +72,7 @@ private fun MainScreen(modifier: Modifier = Modifier) {
         )
 
         HardwareButtonsSection(dm)
+        UsbSection(usbFileTransferEnabled) { usbFileTransferEnabled = it; dm.enableUsbFileTransfer(it) }
         PowerSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
         AppInstallSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
         OtaSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
@@ -117,6 +119,13 @@ private fun HardwareButtonsSection(dm: DeviceManager) {
         ToggleButtonRow("Enable Volume Down", dm::enableVolumeDownButton, dm::disableVolumeDownButton)
         ToggleButtonRow("Enable Left Scan", dm::enableLeftScanButton, dm::disableLeftScanButton)
         ToggleButtonRow("Enable Right Scan", dm::enableRightScanButton, dm::disableRightScanButton)
+    }
+}
+
+@Composable
+private fun UsbSection(fileTransfer: Boolean, onFileTransfer: (Boolean) -> Unit) {
+    Section("USB", expanded = false) {
+        ToggleRow("Enable File Transfer", fileTransfer, onFileTransfer)
     }
 }
 
