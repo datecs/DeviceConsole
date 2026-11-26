@@ -1,8 +1,12 @@
 package com.datecs.deviceconsole
 
 import android.content.ComponentName
+import android.content.Context
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -161,7 +165,38 @@ private fun PowerSection(dm: DeviceManager, toast: (String) -> Unit) {
             }) { Text("Schedule") }
             Button(onClick = { dm.cancelReboot(); toast("Cancelled") }) { Text("Cancel") }
         }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Screen", style = MaterialTheme.typography.titleSmall)
+
+        val context = LocalContext.current
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { safe(toast) { if (!dm.goToSleep()) toast("Sleep failed") } }) {
+                Text("Sleep")
+            }
+            Button(onClick = { safe(toast) { sleepThenWake(context, dm, 5_000L, toast) } }) {
+                Text("Sleep 5 s + Wake")
+            }
+        }
     }
+}
+
+// Turns the screen off, then back on after delayMs. The partial wake lock keeps the CPU running
+// while the device is asleep; without it the device may suspend and wakeUp() would never run.
+private fun sleepThenWake(context: Context, dm: DeviceManager, delayMs: Long, toast: (String) -> Unit) {
+    val wakeLock = context.getSystemService(PowerManager::class.java)
+        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DeviceConsole:sleepThenWake")
+    wakeLock.acquire(delayMs + 5_000L)
+    if (!dm.goToSleep()) {
+        wakeLock.release()
+        toast("Sleep failed")
+        return
+    }
+    Handler(Looper.getMainLooper()).postDelayed({
+        val awake = try { dm.wakeUp() } catch (e: Exception) { false }
+        if (wakeLock.isHeld) wakeLock.release()
+        toast(if (awake) "Woke up" else "Wake failed")
+    }, delayMs)
 }
 
 @Composable

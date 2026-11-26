@@ -138,6 +138,37 @@ dm.scheduleReboot(System.currentTimeMillis() + 5 * 60_000L)
 dm.cancelReboot()
 ```
 
+### Screen Sleep / Wake
+
+Turn the screen off and on from code, like a power button press. Use it when the power button cannot be reached (device mounted in a machine) or is disabled.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `goToSleep()` | `boolean` | Screen off, device goes to sleep. `true` if the device is asleep when the call returns |
+| `wakeUp()` | `boolean` | Screen on. `true` if the device is awake when the call returns |
+
+```kotlin
+// Requires <uses-permission android:name="android.permission.WAKE_LOCK" />
+val wakeLock = context.getSystemService(PowerManager::class.java)
+    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyApp:screenCycle")
+
+wakeLock.acquire(10_000L)            // keep the CPU running while the screen is off
+if (dm.goToSleep()) {
+    Handler(Looper.getMainLooper()).postDelayed({
+        dm.wakeUp()
+        if (wakeLock.isHeld) wakeLock.release()
+    }, 1_000L)
+} else {
+    wakeLock.release()
+}
+```
+
+- **Hold a partial wake lock from before `goToSleep()` until after `wakeUp()`.** Once asleep the CPU may suspend, and a delayed `wakeUp()` (Handler, coroutine `delay`, Timer) then does not run until something else wakes the device.
+- Both work in kiosk mode and while the power button is disabled. With the power button disabled the user cannot wake the device, so the wake lock above is not optional.
+- `goToSleep()` turns the screen off even if an activity keeps it on (`FLAG_KEEP_SCREEN_ON`, screen wake lock).
+- If a screen lock is configured, `wakeUp()` shows the lock screen.
+- Available only on firmware that includes these methods. On older firmware the call throws `NoSuchMethodError`; catch it if the app must also run there.
+
 ---
 
 ## App Install / Uninstall
