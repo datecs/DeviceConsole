@@ -6,15 +6,13 @@ plugins {
 android {
     namespace = "com.datecs.deviceconsole"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version = release(37)
     }
 
     defaultConfig {
         applicationId = "com.datecs.deviceconsole"
         minSdk = 30
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 

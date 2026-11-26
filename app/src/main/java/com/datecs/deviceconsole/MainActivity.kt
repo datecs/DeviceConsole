@@ -32,11 +32,28 @@ class MainActivity : ComponentActivity() {
         setContent {
             DeviceConsoleTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
-                    MainScreen(Modifier.padding(padding))
+                    if (hasDeviceLibrary()) {
+                        MainScreen(Modifier.padding(padding))
+                    } else {
+                        Text(
+                            "This app needs the com.android.device library, which is part of " +
+                                "the firmware of Datecs Android devices. It is not available " +
+                                "on this device.",
+                            modifier = Modifier.padding(padding).padding(16.dp)
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+// The library is loaded from the device (uses-library in the manifest), not from the APK.
+private fun hasDeviceLibrary(): Boolean = try {
+    Class.forName("com.android.device.DeviceManager")
+    true
+} catch (e: ClassNotFoundException) {
+    false
 }
 
 @Composable
@@ -275,6 +292,11 @@ private fun OtaSection(dm: DeviceManager, toast: (String) -> Unit) {
         var otaStatus by remember { mutableStateOf("") }
         var otaProgress by remember { mutableFloatStateOf(0f) }
         var otaRunning by remember { mutableStateOf(false) }
+        // Status 6: the update is installed and the device must reboot to finish it.
+        var otaReady by remember { mutableStateOf(false) }
+        // The listener is told the current status as soon as it is registered. Reboot on our own
+        // only for an update started with the button below, not for one that was already waiting.
+        var startedHere by remember { mutableStateOf(false) }
 
         DisposableEffect(dm) {
             val listener = object : IOtaUpdateListener.Stub() {
@@ -282,7 +304,8 @@ private fun OtaSection(dm: DeviceManager, toast: (String) -> Unit) {
                     otaProgress = progress.toFloat()
                     otaStatus = formatOtaStatus(status, progress)
                     otaRunning = status in 1..5 || status == 0x7FFFFFFE
-                    if (status == 6) { otaRunning = false; dm.rebootAfterOta() }
+                    otaReady = status == 6
+                    if (status == 6 && startedHere) dm.rebootAfterOta()
                 }
             }
             dm.addOtaListener(listener)
@@ -301,12 +324,17 @@ private fun OtaSection(dm: DeviceManager, toast: (String) -> Unit) {
             onClick = {
                 safe(toast) {
                     if (dm.installOtaUpdate(otaPath, null)) {
-                        otaRunning = true; otaStatus = "Starting..."
+                        startedHere = true; otaRunning = true; otaStatus = "Starting..."
                     } else toast("OTA failed to start")
                 }
             },
-            enabled = !otaRunning
+            enabled = !otaRunning && !otaReady
         ) { Text("Install OTA") }
+        if (otaReady) {
+            DangerButton("Reboot to Finish Update") {
+                safe(toast) { if (!dm.rebootAfterOta()) toast("Reboot refused") }
+            }
+        }
     }
 }
 
@@ -331,7 +359,7 @@ private fun KioskSection(dm: DeviceManager, apiVersion: Int, toast: (String) -> 
         if (apiVersion >= 1) {
             Spacer(Modifier.height(4.dp))
             Text("Available in Kiosk", style = MaterialTheme.typography.titleSmall)
-            var features by remember { mutableStateOf(dm.kioskFeatures) }
+            var features by remember { mutableIntStateOf(dm.kioskFeatures) }
             val setFeature = { flag: Int, on: Boolean ->
                 val wanted = if (on) features or flag else features and flag.inv()
                 if (dm.setKioskFeatures(wanted)) {
@@ -480,7 +508,7 @@ private fun formatOtaStatus(status: Int, progress: Int): String = when {
     status == 3 -> "Downloading... $progress%"
     status == 4 -> "Verifying... $progress%"
     status == 5 -> "Finalizing... $progress%"
-    status == 6 -> "Update complete, rebooting..."
+    status == 6 -> "Update installed, reboot to finish"
     status == 7 -> "Error"
     status == 8 -> "Rolling back..."
     status == 0x7FFFFFFE -> "Copying... $progress%"
