@@ -44,6 +44,7 @@ if (api >= 1) {
 |-------|------|
 | 0 | Everything not listed below (firmware without `getApiVersion()`) |
 | 1 | `getApiVersion()`, `setKioskFeatures()` / `getKioskFeatures()`, hardware button state getters. Kiosk mode behaves as described under [Kiosk Mode](#kiosk-mode) |
+| 2 | `setAllowedCallers()` / `getAllowedCallers()`, see [Allowed Callers](#allowed-callers). Every state-changing call is written to the log with the calling package |
 
 USB file transfer and screen sleep / wake were added shortly before level 1 and are present on some level 0 firmware; guard them with `NoSuchMethodError` if the app must run on any firmware.
 
@@ -240,6 +241,7 @@ dm.uninstallAppSilent("com.example.app", object : IInstallerListener.Stub() {
 | 0 | Success |
 | -1 | File not found / IO error |
 | -2 | Signature verification failed |
+| -3 | The calling app is not an allowed caller (API level 2) |
 | Other | Android PackageInstaller error code |
 
 ### Legacy API
@@ -376,6 +378,37 @@ val features = dm.kioskFeatures
 With the power menu off the user cannot switch the device off; offer `shutdown()` / `reboot()` in the app if operators need it.
 
 On firmware older than API level 1 the kiosk features cannot be changed and depend on the model: the power menu is blocked on DAKT-50, BlueCash-05 and BlueCash-5000 and available on the other models; DAKT-50, BlueCash-05 and BlueCash-5000 also block network settings in kiosk mode.
+
+---
+
+## Allowed Callers
+
+From API level 2. By default every app on the device may call every method. An app can restrict the methods that change something (install, uninstall, OTA, reboot, shutdown, kiosk, home launcher, buttons, bars, USB file transfer, sleep / wake) to a list of packages. Methods that only read stay open to every app.
+
+```kotlin
+// Only this app and the management agent may control the device
+dm.setAllowedCallers(arrayOf(packageName, "com.example.agent"))
+
+// Read; an empty array means everyone
+val callers = dm.allowedCallers
+
+// Remove the restriction
+dm.setAllowedCallers(null)
+```
+
+Rules:
+- While the list is empty, any app may set it. Afterwards only a listed package can change or clear it.
+- The calling app's own package must be in the list it sets, so an app cannot lock itself out.
+- A listed package does not have to be installed yet.
+- The list is kept across reboots and firmware updates. A factory reset clears it.
+- Apps that are part of the firmware are always allowed.
+- `adb shell` counts as the package `com.android.shell`; add it to the list to keep using `service call` on a restricted test device.
+
+`setAllowedCallers()` returns `false` and changes nothing if the caller may not change the list, is not in the new list, or an entry is not a package name.
+
+A call from an app that is not listed changes nothing and does not throw: methods with a result return `false`, methods without a result do nothing, and the install / uninstall listener receives result code `-3`. The refused call is written to the device log (tag `DeviceService`) with the calling package.
+
+The first app to set the list controls it until a factory reset. Set it from the app that owns the device, as part of provisioning.
 
 ---
 

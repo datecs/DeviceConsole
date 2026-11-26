@@ -86,6 +86,9 @@ private fun MainScreen(modifier: Modifier = Modifier) {
         AppInstallSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
         OtaSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
         KioskSection(dm, apiVersion) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+        if (apiVersion >= 2) {
+            AllowedCallersSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+        }
     }
 }
 
@@ -359,6 +362,32 @@ private fun KioskSection(dm: DeviceManager, apiVersion: Int, toast: (String) -> 
                 Text("Set Home")
             }
             Button(onClick = { safe(toast) { dm.resetDefaultHome() } }) { Text("Reset Home") }
+        }
+    }
+}
+
+// Which packages may make state-changing calls. From API level 2.
+@Composable
+private fun AllowedCallersSection(dm: DeviceManager, toast: (String) -> Unit) {
+    Section("Allowed Callers", expanded = false) {
+        val context = LocalContext.current
+        var current by remember { mutableStateOf(dm.allowedCallers.toList()) }
+        var input by remember { mutableStateOf(context.packageName) }
+        InfoRow("Current", if (current.isEmpty()) "everyone" else current.joinToString("\n"))
+        OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth(),
+            label = { Text("Packages, comma separated") }, singleLine = true)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                val list = input.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                if (!dm.setAllowedCallers(list.toTypedArray())) {
+                    toast("Refused: this app must be in the list and allowed to change it")
+                }
+                current = dm.allowedCallers.toList()
+            }) { Text("Set") }
+            Button(onClick = {
+                if (!dm.setAllowedCallers(null)) toast("Refused: this app is not an allowed caller")
+                current = dm.allowedCallers.toList()
+            }) { Text("Allow Everyone") }
         }
     }
 }
