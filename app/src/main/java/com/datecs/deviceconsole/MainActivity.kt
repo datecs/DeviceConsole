@@ -57,6 +57,14 @@ private fun MainScreen(modifier: Modifier = Modifier) {
     val phone = remember { dm.phoneNumber ?: "" }
     val operator = remember { dm.networkOperatorName ?: "" }
 
+    // Install, uninstall and OTA results arrive on a binder thread, where a toast cannot be
+    // shown. Post every toast to the main thread.
+    val toast: (String) -> Unit = remember {
+        val main = Handler(Looper.getMainLooper())
+        val appContext = context.applicationContext
+        { msg: String -> main.post { Toast.makeText(appContext, msg, Toast.LENGTH_SHORT).show() }; Unit }
+    }
+
     var statusBarEnabled by remember { mutableStateOf(dm.statusBarEnabled) }
     var expansionEnabled by remember { mutableStateOf(dm.statusBarExpansionEnabled) }
     var navBarEnabled by remember { mutableStateOf(dm.navigationBarEnabled) }
@@ -82,12 +90,12 @@ private fun MainScreen(modifier: Modifier = Modifier) {
 
         HardwareButtonsSection(dm, apiVersion)
         UsbSection(usbFileTransferEnabled) { usbFileTransferEnabled = it; dm.enableUsbFileTransfer(it) }
-        PowerSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-        AppInstallSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-        OtaSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-        KioskSection(dm, apiVersion) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+        PowerSection(dm, toast)
+        AppInstallSection(dm, toast)
+        OtaSection(dm, toast)
+        KioskSection(dm, apiVersion, toast)
         if (apiVersion >= 2) {
-            AllowedCallersSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+            AllowedCallersSection(dm, toast)
         }
     }
 }
@@ -236,10 +244,10 @@ private fun AppInstallSection(dm: DeviceManager, toast: (String) -> Unit) {
             label = { Text("APK Path") }, singleLine = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                safe(toast) { dm.installAppSilent(apkPath, installCallback); toast("Installing...") }
+                safe(toast) { toast("Installing..."); dm.installAppSilent(apkPath, installCallback) }
             }) { Text("Install") }
             Button(onClick = {
-                safe(toast) { dm.installApplication(apkPath, installCallback, true); toast("Installing...") }
+                safe(toast) { toast("Installing..."); dm.installApplication(apkPath, installCallback, true) }
             }) { Text("Install+Launch") }
         }
 
@@ -248,13 +256,13 @@ private fun AppInstallSection(dm: DeviceManager, toast: (String) -> Unit) {
             label = { Text("Package Name") }, singleLine = true)
         Button(onClick = {
             if (pkg.isNotBlank()) safe(toast) {
+                toast("Uninstalling...")
                 dm.uninstallAppSilent(pkg, object : IInstallerListener.Stub() {
                     override fun onInstallComplete(p: String?, c: Int, m: String?) {}
                     override fun onUninstallComplete(p: String?, c: Int, m: String?) {
                         toast(if (c == 0) "Uninstalled: $p" else "Failed: ${m ?: "code $c"}")
                     }
                 })
-                toast("Uninstalling...")
             }
         }) { Text("Uninstall") }
     }
