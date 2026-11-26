@@ -2,6 +2,13 @@
 
 Client library for Datecs Android devices. Provides system-level control over device hardware, UI, app management, OTA updates, and kiosk mode.
 
+This repository contains:
+- `app/libs/com.android.device.jar` - the library to compile your app against
+- **DeviceConsole** (`app/`) - a demo app with a control for every API described here
+- this API reference
+
+Build the demo with `./gradlew assembleDebug` and install `app/build/outputs/apk/debug/app-debug.apk`. It works only on Datecs Android devices, because the library is part of their firmware. DeviceConsole also declares itself as a home app, so that it can be used to try [Home Launcher](#home-launcher); after installing it, Android may ask which home app to use.
+
 ## Setup
 
 Add `com.android.device.jar` as a compile-only dependency:
@@ -25,6 +32,8 @@ Get an instance:
 ```kotlin
 val dm = DeviceManager.getInstance(context)
 ```
+
+The methods of the listener and callback interfaces (`IInstallerListener`, `IOtaUpdateListener`, `IInstallAppCallback`, `IRemoveAppCallback`, `IInstallOtaCallback`) are called on a background (binder) thread. Switch to the main thread before touching the UI, for example with `runOnUiThread { }` or `Handler(Looper.getMainLooper()).post { }`.
 
 ### API level and older firmware
 
@@ -242,7 +251,9 @@ dm.uninstallAppSilent("com.example.app", object : IInstallerListener.Stub() {
 | -1 | File not found / IO error |
 | -2 | Signature verification failed |
 | -3 | The calling app is not an allowed caller (API level 2) |
-| Other | Android PackageInstaller error code |
+| Other | Android `PackageInstaller` status code (`PackageInstaller.STATUS_FAILURE` ...) |
+
+Installing an older version than the one already installed is reported as success (`0`); the installed version is kept.
 
 ### Legacy API
 
@@ -257,6 +268,8 @@ dm.removeApp("com.example.app", object : IRemoveAppCallback.Stub() {
     override fun onError() { }
 })
 ```
+
+`installApp()` returns `false`, without calling the callback, if the file does not exist, the signature check fails or the caller is not allowed. `onError()` receives `2` when an older version than the installed one was offered (the installed version is kept) and `3` for any other failure.
 
 ### Signature Verification
 
@@ -294,35 +307,38 @@ An app installed through this API (extended or legacy) is registered as the Andr
 ### Extended API (recommended)
 
 ```kotlin
-// Register listener for real-time updates
-dm.addOtaListener(object : IOtaUpdateListener.Stub() {
+// Register a listener for real-time updates
+val listener = object : IOtaUpdateListener.Stub() {
     override fun onStatusChanged(status: Int, progress: Int) {
-        when (status) {
-            0 -> { /* idle */ }
-            1 -> { /* checking */ }
-            3 -> { /* downloading: progress% */ }
-            4 -> { /* verifying: progress% */ }
-            5 -> { /* finalizing: progress% */ }
-            6 -> { /* complete — reboot when ready */ dm.rebootAfterOta() }
-            7 -> { /* error */ }
-            0x7FFFFFFE -> { /* copying file: progress% */ }
+        when {
+            status == 0x7FFFFFFE -> { /* copying the file: progress% */ }
+            status == 3 -> { /* downloading: progress% */ }
+            status == 4 -> { /* verifying: progress% */ }
+            status == 5 -> { /* finalizing: progress% */ }
+            status == 6 -> { /* installed, waiting for a reboot */ }
+            status == 7 || status < 0 -> { /* failed */ }
         }
     }
-})
+}
+dm.addOtaListener(listener)
 
-// Start update (no auto-reboot)
-dm.installOtaUpdate("/sdcard/Download/update.zip", null)
+// Start the update (no auto-reboot)
+val started = dm.installOtaUpdate("/sdcard/Download/update.zip", null)
 
-// Poll status (alternative to listener)
+// Poll the status (alternative to a listener)
 val status = dm.otaStatus
 val progress = dm.otaProgress
 
-// Reboot (only works when status == 6)
+// Reboot into the new firmware (returns false unless the status is 6)
 dm.rebootAfterOta()
 
 // Unregister
 dm.removeOtaListener(listener)
 ```
+
+- `addOtaListener()` reports the current status to the new listener at once. If an update is already waiting for a reboot, the listener receives status 6 immediately, so do not call `rebootAfterOta()` from the listener unless a reboot at that moment is acceptable.
+- `installOtaUpdate()` returns `false` if the file does not exist or an update is already running. A listener passed to it is registered like one passed to `addOtaListener()`.
+- The update is installed to the inactive system slot while the device keeps working. The device runs the old firmware until it reboots.
 
 ### Status Codes
 
@@ -345,9 +361,11 @@ dm.removeOtaListener(listener)
 ```kotlin
 dm.installOta("/sdcard/Download/update.zip", object : IInstallOtaCallback.Stub() {
     override fun onStatusUpdate(status: Int, percent: Int) { }
-    override fun onComplete(errorCode: Int) { /* negative = error */ }
+    override fun onComplete(errorCode: Int) { /* called only on failure, with a negative code */ }
 })
 ```
+
+`installOta()` returns `false` if the file does not exist. On success the device reboots by itself and `onComplete()` is not called.
 
 ---
 
@@ -363,7 +381,7 @@ dm.enterKiosk(ComponentName("com.example.app", "com.example.app.MainActivity"))
 dm.exitKiosk()
 ```
 
-`enterKiosk()` returns `false` and changes nothing if the activity is not installed or is disabled. The app is started the way a launcher starts it (`ACTION_MAIN` + `CATEGORY_LAUNCHER`); if it is already locked it is left as it is.
+`enterKiosk()` returns `false` and changes nothing if the activity is not installed or is disabled. The app is started the way a launcher starts it (`ACTION_MAIN` + `CATEGORY_LAUNCHER`). If it is already running but not locked, it is restarted; if it is already locked, it is left as it is. `exitKiosk()` closes the kiosk app.
 
 In kiosk mode:
 - The user cannot leave the app: Home and Recents are hidden, notifications and quick settings are off
@@ -371,6 +389,8 @@ In kiosk mode:
 - Network settings (Wi-Fi, Bluetooth, mobile network) are not blocked
 - App install and uninstall through this API keep working
 - The power button still turns the screen off and on, unless `disablePowerButton()` was called
+
+Updating the kiosk app while in kiosk mode releases the lock: Android closes the app to replace it, and the new version starts unlocked. The lock returns at the next `enterKiosk()` or reboot. A kiosk app that updates itself should call `enterKiosk()` when it starts.
 
 ### Kiosk features (API level 1)
 
@@ -404,7 +424,7 @@ On firmware older than API level 1 the kiosk features cannot be changed and depe
 
 ## Allowed Callers
 
-From API level 2. By default every app on the device may call every method. An app can restrict the methods that change something (install, uninstall, OTA, reboot, shutdown, kiosk, home launcher, buttons, bars, USB file transfer, sleep / wake) to a list of packages. Methods that only read stay open to every app.
+From API level 2. By default every app on the device may call every method. An app can restrict the methods that change something (install, uninstall, OTA, reboot, scheduled reboot, shutdown, kiosk, home launcher, buttons, bars, USB file transfer, sleep / wake) to a list of packages. Methods that only read stay open to every app.
 
 ```kotlin
 // Only this app and the management agent may control the device
@@ -447,5 +467,7 @@ Set any app as the default home launcher. The activity must declare:
 
 ```kotlin
 dm.setHomeActivity(ComponentName("com.example.launcher", "com.example.launcher.MainActivity"))
-dm.resetDefaultHome()  // clear preference
+dm.resetDefaultHome()  // back to a pre-installed launcher
 ```
+
+Both return `true` on success. `resetDefaultHome()` returns `false` if no other launcher is installed.
