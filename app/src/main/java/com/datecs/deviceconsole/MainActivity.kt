@@ -44,6 +44,11 @@ private fun MainScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val dm = remember { DeviceManager.getInstance(context) }
 
+    // API level of the firmware. Firmware older than level 1 does not have getApiVersion(), so
+    // the call itself throws NoSuchMethodError there. Methods added in a later level must only
+    // be called after this check.
+    val apiVersion = remember { try { dm.apiVersion } catch (e: NoSuchMethodError) { 0 } }
+
     val serial = remember { dm.serialNumber ?: "" }
     val version = remember { dm.productVersion ?: "" }
     val imei = remember { dm.imei ?: "" }
@@ -67,7 +72,7 @@ private fun MainScreen(modifier: Modifier = Modifier) {
         Text("DeviceService API Demo", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(4.dp))
 
-        DeviceInfoSection(serial, version, imei, imsi, iccid, phone, operator)
+        DeviceInfoSection(serial, version, apiVersion, imei, imsi, iccid, phone, operator)
 
         UIControlsSection(statusBarEnabled, expansionEnabled, navBarEnabled,
             onStatusBar = { statusBarEnabled = it; dm.enableStatusBar(it) },
@@ -75,23 +80,24 @@ private fun MainScreen(modifier: Modifier = Modifier) {
             onNavBar = { navBarEnabled = it; dm.enableNavigationBar(it) }
         )
 
-        HardwareButtonsSection(dm)
+        HardwareButtonsSection(dm, apiVersion)
         UsbSection(usbFileTransferEnabled) { usbFileTransferEnabled = it; dm.enableUsbFileTransfer(it) }
         PowerSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
         AppInstallSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
         OtaSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-        KioskSection(dm) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+        KioskSection(dm, apiVersion) { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
     }
 }
 
 @Composable
 private fun DeviceInfoSection(
-    serial: String, version: String, imei: String, imsi: String,
+    serial: String, version: String, apiVersion: Int, imei: String, imsi: String,
     iccid: String, phone: String, operator: String
 ) {
     Section("Device Info") {
         InfoRow("Serial", serial)
         InfoRow("Version", version)
+        InfoRow("API level", apiVersion.toString())
         InfoRow("IMEI", imei)
         InfoRow("IMSI", imsi)
         InfoRow("ICCID", iccid)
@@ -115,14 +121,23 @@ private fun UIControlsSection(
 }
 
 @Composable
-private fun HardwareButtonsSection(dm: DeviceManager) {
+private fun HardwareButtonsSection(dm: DeviceManager, apiVersion: Int) {
     Section("Hardware Buttons", expanded = false) {
-        ToggleButtonRow("Enable Power Button", dm::enablePowerButton, dm::disablePowerButton)
-        ToggleButtonRow("Enable Home Button", dm::enableHomeButton, dm::disableHomeButton)
-        ToggleButtonRow("Enable Volume Up", dm::enableVolumeUpButton, dm::disableVolumeUpButton)
-        ToggleButtonRow("Enable Volume Down", dm::enableVolumeDownButton, dm::disableVolumeDownButton)
-        ToggleButtonRow("Enable Left Scan", dm::enableLeftScanButton, dm::disableLeftScanButton)
-        ToggleButtonRow("Enable Right Scan", dm::enableRightScanButton, dm::disableRightScanButton)
+        // The state getters exist from API level 1. Older firmware cannot report the state,
+        // so the switches start as "on" there.
+        val canRead = apiVersion >= 1
+        ToggleButtonRow("Enable Power Button", !canRead || dm.powerButtonEnabled,
+            dm::enablePowerButton, dm::disablePowerButton)
+        ToggleButtonRow("Enable Home Button", !canRead || dm.homeButtonEnabled,
+            dm::enableHomeButton, dm::disableHomeButton)
+        ToggleButtonRow("Enable Volume Up", !canRead || dm.volumeUpButtonEnabled,
+            dm::enableVolumeUpButton, dm::disableVolumeUpButton)
+        ToggleButtonRow("Enable Volume Down", !canRead || dm.volumeDownButtonEnabled,
+            dm::enableVolumeDownButton, dm::disableVolumeDownButton)
+        ToggleButtonRow("Enable Left Scan", !canRead || dm.leftScanButtonEnabled,
+            dm::enableLeftScanButton, dm::disableLeftScanButton)
+        ToggleButtonRow("Enable Right Scan", !canRead || dm.rightScanButtonEnabled,
+            dm::enableRightScanButton, dm::disableRightScanButton)
     }
 }
 
@@ -285,7 +300,7 @@ private fun OtaSection(dm: DeviceManager, toast: (String) -> Unit) {
 }
 
 @Composable
-private fun KioskSection(dm: DeviceManager, toast: (String) -> Unit) {
+private fun KioskSection(dm: DeviceManager, apiVersion: Int, toast: (String) -> Unit) {
     Section("Kiosk & Home Launcher", expanded = false) {
         Text("Kiosk Mode", style = MaterialTheme.typography.titleSmall)
         var kPkg by remember { mutableStateOf("com.datecs.deviceconsole") }
@@ -299,6 +314,36 @@ private fun KioskSection(dm: DeviceManager, toast: (String) -> Unit) {
                 Text("Enter Kiosk")
             }
             Button(onClick = { safe(toast) { dm.exitKiosk() } }) { Text("Exit Kiosk") }
+        }
+
+        // What stays available in kiosk mode. From API level 1.
+        if (apiVersion >= 1) {
+            Spacer(Modifier.height(4.dp))
+            Text("Available in Kiosk", style = MaterialTheme.typography.titleSmall)
+            var features by remember { mutableStateOf(dm.kioskFeatures) }
+            val setFeature = { flag: Int, on: Boolean ->
+                val wanted = if (on) features or flag else features and flag.inv()
+                if (dm.setKioskFeatures(wanted)) {
+                    features = wanted
+                } else {
+                    toast("Refused: notifications and recents need the home button")
+                }
+            }
+            ToggleRow("System Info", (features and DeviceManager.KIOSK_FEATURE_SYSTEM_INFO) != 0) {
+                setFeature(DeviceManager.KIOSK_FEATURE_SYSTEM_INFO, it)
+            }
+            ToggleRow("Power Menu", (features and DeviceManager.KIOSK_FEATURE_POWER_MENU) != 0) {
+                setFeature(DeviceManager.KIOSK_FEATURE_POWER_MENU, it)
+            }
+            ToggleRow("Home Button", (features and DeviceManager.KIOSK_FEATURE_HOME) != 0) {
+                setFeature(DeviceManager.KIOSK_FEATURE_HOME, it)
+            }
+            ToggleRow("Recents Button", (features and DeviceManager.KIOSK_FEATURE_RECENTS) != 0) {
+                setFeature(DeviceManager.KIOSK_FEATURE_RECENTS, it)
+            }
+            ToggleRow("Notifications", (features and DeviceManager.KIOSK_FEATURE_NOTIFICATIONS) != 0) {
+                setFeature(DeviceManager.KIOSK_FEATURE_NOTIFICATIONS, it)
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -366,8 +411,8 @@ private fun ToggleRow(label: String, checked: Boolean, onToggle: (Boolean) -> Un
 }
 
 @Composable
-private fun ToggleButtonRow(label: String, enable: () -> Unit, disable: () -> Unit) {
-    var enabled by remember { mutableStateOf(true) }
+private fun ToggleButtonRow(label: String, initial: Boolean, enable: () -> Unit, disable: () -> Unit) {
+    var enabled by remember { mutableStateOf(initial) }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,

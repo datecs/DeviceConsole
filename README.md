@@ -26,6 +26,27 @@ Get an instance:
 val dm = DeviceManager.getInstance(context)
 ```
 
+### API level and older firmware
+
+The library classes are loaded from the device, not from your APK. A method that the firmware does not have throws `NoSuchMethodError` when called. Existing methods are never removed or changed, so an app built against an older jar keeps working on newer firmware.
+
+`getApiVersion()` tells you what the firmware supports. It exists from level 1, so on older firmware the call itself throws:
+
+```kotlin
+val api = try { dm.apiVersion } catch (e: NoSuchMethodError) { 0 }
+
+if (api >= 1) {
+    dm.setKioskFeatures(DeviceManager.KIOSK_FEATURE_SYSTEM_INFO)
+}
+```
+
+| Level | Adds |
+|-------|------|
+| 0 | Everything not listed below (firmware without `getApiVersion()`) |
+| 1 | `getApiVersion()`, `setKioskFeatures()` / `getKioskFeatures()`, hardware button state getters. Kiosk mode behaves as described under [Kiosk Mode](#kiosk-mode) |
+
+USB file transfer and screen sleep / wake were added shortly before level 1 and are present on some level 0 firmware; guard them with `NoSuchMethodError` if the app must run on any firmware.
+
 ---
 
 ## Device Info
@@ -93,6 +114,19 @@ Disable buttons to make them do nothing when pressed.
 ```kotlin
 dm.disablePowerButton()   // ignore power button presses
 dm.enablePowerButton()    // restore
+```
+
+Read the current state (API level 1):
+
+| Method | Returns |
+|--------|---------|
+| `getPowerButtonEnabled()` | `true` if the power button works |
+| `getHomeButtonEnabled()` | `true` if the home button works |
+| `getVolumeUpButtonEnabled()` / `getVolumeDownButtonEnabled()` | `true` if the volume button works |
+| `getLeftScanButtonEnabled()` / `getRightScanButtonEnabled()` | `true` if the scan button works |
+
+```kotlin
+val powerWorks = dm.powerButtonEnabled
 ```
 
 ---
@@ -306,10 +340,42 @@ dm.enterKiosk(ComponentName("com.example.app", "com.example.app.MainActivity"))
 dm.exitKiosk()
 ```
 
+`enterKiosk()` returns `false` and changes nothing if the activity is not installed or is disabled. The app is started the way a launcher starts it (`ACTION_MAIN` + `CATEGORY_LAUNCHER`); if it is already locked it is left as it is.
+
 In kiosk mode:
-- Home, Recent, and Back buttons are hidden
-- Status bar is controllable via `enableStatusBar()`
-- Power menu (long-press power) is available
+- The user cannot leave the app: Home and Recents are hidden, notifications and quick settings are off
+- Safe boot, factory reset and adding users are blocked
+- Network settings (Wi-Fi, Bluetooth, mobile network) are not blocked
+- App install and uninstall through this API keep working
+- The power button still turns the screen off and on, unless `disablePowerButton()` was called
+
+### Kiosk features (API level 1)
+
+Choose what stays available to the user in kiosk mode. The value is kept across reboots and `exitKiosk()`. It applies at once if kiosk mode is on, otherwise at the next `enterKiosk()`.
+
+| Flag | Value | Meaning |
+|------|-------|---------|
+| `KIOSK_FEATURE_NONE` | 0 | Nothing beyond the app |
+| `KIOSK_FEATURE_SYSTEM_INFO` | 1 | Clock, battery and connectivity in the status bar |
+| `KIOSK_FEATURE_NOTIFICATIONS` | 2 | Notifications (needs `KIOSK_FEATURE_HOME`) |
+| `KIOSK_FEATURE_HOME` | 4 | Home button |
+| `KIOSK_FEATURE_RECENTS` | 8 | Recents button (needs `KIOSK_FEATURE_HOME`) |
+| `KIOSK_FEATURE_POWER_MENU` | 16 | Power menu on a long press of the power button |
+| `KIOSK_FEATURES_DEFAULT` | 17 | System info and power menu |
+
+```kotlin
+// Unattended kiosk: status bar info only, no power menu
+dm.setKioskFeatures(DeviceManager.KIOSK_FEATURE_SYSTEM_INFO)
+
+// Read
+val features = dm.kioskFeatures
+```
+
+`setKioskFeatures()` returns `false` and changes nothing for an unknown flag, or for notifications or recents without home.
+
+With the power menu off the user cannot switch the device off; offer `shutdown()` / `reboot()` in the app if operators need it.
+
+On firmware older than API level 1 the kiosk features cannot be changed and depend on the model: the power menu is blocked on DAKT-50, BlueCash-05 and BlueCash-5000 and available on the other models; DAKT-50, BlueCash-05 and BlueCash-5000 also block network settings in kiosk mode.
 
 ---
 
