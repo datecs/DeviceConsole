@@ -266,6 +266,27 @@ In PCI-compliant mode (`ro.vendor.datecs.pinpad.enabled=1`), APK installs are ve
 
 Rejected with code `-2` if neither matches. Skipped in test mode (`pinpad_test_mode=1`).
 
+### Device Owner Registration
+
+An app installed through this API (extended or legacy) is registered as the Android device owner right after the install, if it declares a device admin receiver:
+
+```xml
+<receiver android:name=".AdminReceiver"
+          android:permission="android.permission.BIND_DEVICE_ADMIN"
+          android:exported="true">
+    <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin" />
+    <intent-filter>
+        <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+    </intent-filter>
+</receiver>
+```
+
+- Nothing is shown to the user and the install result does not report it. Check with `DevicePolicyManager.isDeviceOwnerApp(packageName)`.
+- A device has one owner. If one is already set, the new app is installed but not registered.
+- Updating the owner app keeps it owner.
+- A device owner cannot be uninstalled. To give the role up, the app calls `DevicePolicyManager.clearDeviceOwnerApp(packageName)`; after that it can be removed.
+- An app without a device admin receiver is installed normally.
+
 ---
 
 ## OTA Update
